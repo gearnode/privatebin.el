@@ -40,6 +40,8 @@ You can install this package in several ways:
   :config
   ;; Any additional configuration
   )
+```
+
 ### Manual Installation
 
 ```elisp
