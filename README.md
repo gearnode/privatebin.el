@@ -57,6 +57,7 @@ git clone https://github.com/yourusername/privatebin.el.git
 
 ```elisp
 M-x package-install RET privatebin RET
+```
 
 The package can be configured in several ways:
 
