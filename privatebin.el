@@ -1,9 +1,11 @@
 ;;; privatebin.el --- Interface to privatebin CLI -*- lexical-binding: t -*-
 
-;; Author: Bryan Frimin
-;; Keywords: TODO
+;; Author: Bryan Frimin <bryan@frimin.fr>
+;; Maintainer: Bryan Frimin <bryan@frimin.fr>
+;; URL: https://github.com/gearnode/privatebin.el
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "25.1") (transient "0.3.0"))
+;; Keywords: convenience, tools
 
 ;;; Code:
 
