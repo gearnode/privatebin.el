@@ -7,6 +7,10 @@
 ;; Package-Requires: ((emacs "25.1") (transient "0.3.0"))
 ;; Keywords: convenience, tools
 
+;;; Commentary:
+;; This package provides a global interface to the privatebin CLI tool.
+;; It allows creating and viewing pastes directly from any buffer in Emacs.
+
 ;;; Code:
 
 (require 'url-parse)
