@@ -15,6 +15,7 @@
 
 (require 'url-parse)
 (require 'transient)
+(require 'json)
 
 (defgroup privatebin nil
   "Interface to privatebin CLI."
@@ -25,46 +26,8 @@
   :type 'string
   :group 'privatebin)
 
-(defvar privatebin-bin nil
-  "Current privatebin instance name.")
-
-(defcustom privatebin-default-bin nil
-  "Default privatebin instance name.
-This can be overridden using transient options."
-  :type '(choice (const :tag "None" nil)
-                (string :tag "Instance name"))
-  :group 'privatebin
-  :set (lambda (sym val)
-         (set sym val)
-         (setq privatebin-bin val)))
-
-(defvar privatebin-config nil
-  "Current config file path.")
-
-(defcustom privatebin-default-config nil
-  "Default config file path.
-This can be overridden using transient options."
-  :type '(choice (const :tag "None" nil)
-                (string :tag "Config path"))
-  :group 'privatebin
-  :set (lambda (sym val)
-         (set sym val)
-         (setq privatebin-config val)))
-
-(defcustom privatebin-default-expire "1day"
-  "Default expiration time for pastes."
-  :type 'string
-  :group 'privatebin)
-
-(defcustom privatebin-default-formatter "plaintext"
-  "Default formatter for pastes."
-  :type '(choice (const :tag "Plain Text" "plaintext")
-                 (const :tag "Markdown" "markdown")
-                 (const :tag "Syntax Highlighting" "syntaxhighlighting"))
-  :group 'privatebin)
-
-;;;###autoload (autoload 'privatebin-dispatch "privatebin" nil t)
-(require 'json)
+(defvar privatebin--current-url nil
+  "Store the URL for the current show command.")
 
 (defun privatebin--read-config (config-file)
   "Read privatebin config from CONFIG-FILE."
@@ -79,37 +42,10 @@ This can be overridden using transient options."
   "Get list of bin names from CONFIG-FILE or default config."
   (let* ((config (privatebin--read-config
                  (or config-file
-                     privatebin-config
                      "~/.config/privatebin/config.json")))
          (bins (when config (gethash "bin" config))))
     (when bins
       (mapcar (lambda (bin) (gethash "name" bin)) bins))))
-
-(cl-defmethod transient-init-value ((obj privatebin--config-variable))
-  "Initialize transient variable OBJ from its corresponding global variable."
-  (let* ((global-key (oref obj global-key))
-         (current-var (cl-case global-key
-                       (privatebin-default-bin 'privatebin-bin)
-                       (privatebin-default-config 'privatebin-config)))
-         (global-val (symbol-value current-var)))
-    (when global-val
-      (oset obj value global-val))))
-
-(cl-defmethod transient-infix-read ((obj privatebin--config-variable))
-  "Read value for transient variable OBJ."
-  (if (slot-value obj 'reader)
-      (funcall (slot-value obj 'reader)
-               (slot-value obj 'prompt)
-               nil
-               (slot-value obj 'history))
-    (read-string (slot-value obj 'prompt) nil nil)))
-
-(cl-defmethod transient-format-value ((obj privatebin--config-variable))
-  "Format value for transient variable OBJ."
-  (let ((value (slot-value obj 'value)))
-    (if value
-        (propertize value 'face 'transient-value)
-      (propertize "none" 'face 'transient-inactive-value))))
 
 (transient-define-prefix privatebin-dispatch ()
   "Dispatch a privatebin command."
@@ -138,16 +74,12 @@ This can be overridden using transient options."
     :choices ("5min" "10min" "1hour" "1day" "1week" "1month" "1year" "never"))
    ("-b" "Burn after reading" "--burn-after-reading")
    ("-d" "Open discussion" "--open-discussion")
-   ("-p" "Password protect" "--password=")
+   ("-p" "Password protect" "--password="
+    :reader privatebin--read-password)
    ("-g" "Gzip" "--gzip")
    ("-a" "Attachment" "--attachment")]
   ["Actions"
    ("c" "Create from region or buffer" privatebin-create-paste)])
-
-(defun privatebin--get-global-options ()
-  "Get command line options from global transient values."
-  (let ((args (transient-args 'privatebin-dispatch)))
-    (string-join args " ")))
 
 (defun privatebin--get-text ()
   "Get text from active region or whole buffer."
@@ -158,20 +90,13 @@ This can be overridden using transient options."
 (defun privatebin-create-paste ()
   "Create a new paste using the selected region or current buffer."
   (interactive)
-  (let* ((global-opts (privatebin--get-global-options))
-         (args (transient-args 'privatebin-create-dispatch))
-         (password-arg (--first (string-prefix-p "--password=" it) args))
-         (password (when password-arg
-                    (read-passwd "Password: " t)))
-         (filtered-args (remove password-arg args))
+  (let* ((args (append (transient-args 'privatebin-dispatch)
+                      (transient-args 'privatebin-create-dispatch)))
          (buffer (generate-new-buffer "*privatebin-temp*"))
          (text (privatebin--get-text))
-         (command (concat privatebin-executable " "
-                         global-opts
+         (command (concat privatebin-executable
                          " create "
-                         (string-join filtered-args " ")
-                         (when password
-                           (format " --password=%s" password)))))
+                         (string-join args " "))))
     (with-current-buffer buffer
       (insert text)
       (shell-command-on-region (point-min) (point-max) command
@@ -182,18 +107,23 @@ This can be overridden using transient options."
       (kill-new (buffer-string)))
     (kill-buffer "*privatebin-output*")))
 
+(defun privatebin--read-password (prompt &optional _initial-input _history)
+  "Read password securely using PROMPT.
+Ignore INITIAL-INPUT and HISTORY arguments as they're not used for passwords."
+  (let ((pass (read-passwd prompt)))
+    (when (and pass (not (string-empty-p pass)))
+      pass)))
+
 (transient-define-prefix privatebin-show-dispatch ()
   "Show a paste with specified options."
   :value '()
   ["Show Options"
    ("-c" "Confirm burn" "--confirm-burn")
    ("-i" "Allow insecure" "--insecure")
-   ("-p" "Password protect" "--password=")]
+   ("-p" "Password protected" "--password="
+    :reader privatebin--read-password)]
   ["Actions"
    ("s" "Show paste" privatebin-show-paste)])
-
-(defvar privatebin--current-url nil
-  "Store the URL for the current show command.")
 
 (defun privatebin-show-paste-with-url (url)
   "Set the URL for showing a paste."
@@ -204,30 +134,27 @@ This can be overridden using transient options."
 (defun privatebin-show-paste ()
   "Show paste with selected options."
   (interactive)
-  (let* ((global-opts (privatebin--get-global-options))
-         (args (transient-args 'privatebin-show-dispatch))
-         (password-arg (--first (string-prefix-p "--password=" it) args))
-         (password (when password-arg
-                    (read-passwd "Password: " t)))
-         (filtered-args (remove password-arg args))
-         (buffer (generate-new-buffer "*privatebin-paste*"))
-         (command (concat privatebin-executable " "
-                         global-opts
-                         " show "
-                         (string-join filtered-args " ")
-                         (when password
-                           (format " --password=%s" password))
-                         " "
-                         (shell-quote-argument privatebin--current-url))))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (call-process-shell-command command nil t)
-        (goto-char (point-min))
-        (view-mode)
-        (pop-to-buffer (current-buffer))))))
-
-(defalias 'privatebin-show 'privatebin-show-paste-with-url)
+  (unless privatebin--current-url
+    (setq privatebin--current-url
+          (read-string "Privatebin URL: ")))
+  (when privatebin--current-url
+    (let* ((args (append (transient-args 'privatebin-dispatch)
+                        (transient-args 'privatebin-show-dispatch)))
+           (buffer (generate-new-buffer "*privatebin-paste*"))
+           (command (concat privatebin-executable
+                          " show "
+                          (mapconcat #'shell-quote-argument args " ")
+                          " "
+                          (shell-quote-argument privatebin--current-url))))
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          ;; (message "Debug: executing command: %s" command)
+          (call-process-shell-command command nil t)
+          (goto-char (point-min))
+          (view-mode)
+          (pop-to-buffer (current-buffer))))
+      (setq privatebin--current-url nil))))
 
 ;;;###autoload
 (defalias 'privatebin 'privatebin-dispatch
